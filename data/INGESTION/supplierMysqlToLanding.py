@@ -26,7 +26,8 @@ MYSQL_CONFIG = {
         "database": "retailerDB",
         "user": "myuser",
         "password": "Jdsports@123",
-        "connection_timeout": 30
+        "connection_timeout": 30,
+        "driver": "com.mysql.cj.jdbc.Driver"
 }
 
 # Initialize GCS & BigQuery Clients
