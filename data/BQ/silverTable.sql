@@ -52,10 +52,9 @@ WHEN MATCHED AND
 (
     target.name IS DISTINCT FROM source.name
     OR target.email IS DISTINCT FROM source.email
-    #SAFE_CAST tries to convert the Silver string into a timestamp.
-    #If conversion fails, it doesn't crash the query, it returns NULL.
-    OR SAFE_CAST(target.updated_at AS TIMESTAMP)
-       IS DISTINCT FROM source.updated_at
+    #Both target and source updated_at are STRING in this dataset,
+    #so compare directly without casting.
+    OR target.updated_at IS DISTINCT FROM source.updated_at
 )
 
 THEN UPDATE SET
