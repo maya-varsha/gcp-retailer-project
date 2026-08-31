@@ -29,7 +29,7 @@ today = datetime.datetime.today().strftime('%Y%m%d')  # Format: YYYYMMDD
 
 # Step 4: Define File Paths with Date
 local_parquet_file = f"/tmp/customer_reviews_{today}.parquet"
-GCS_BUCKET = "retailer-datalake-project-27032025"
+GCS_BUCKET = "datalake-project-bkt-22082026"
 GCS_PATH = f"landing/customer_reviews/customer_reviews_{today}.parquet"
 
 # Step 5: Save Pandas DataFrame as Parquet Locally
