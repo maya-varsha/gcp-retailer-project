@@ -1,6 +1,5 @@
 --1️. Sales Summary (sales_summary)
-CREATE TABLE IF NOT EXISTS `project-bd10f83d-812d-48fb-93c
-.gold_dataset_maya.sales_summary`
+CREATE TABLE IF NOT EXISTS `project-bd10f83d-812d-48fb-93c.gold_dataset_maya.sales_summary`
 AS
 SELECT 
     o.order_date,
