@@ -7,7 +7,7 @@ CREATE EXTERNAL TABLE IF NOT EXISTS `project-bd10f83d-812d-48fb-93c.bronze_datas
 )
 OPTIONS (
   format = 'JSON',
-  uris = ['gs://retailer-datalake-project-27032025/landing/retailer-db/orders/*.json']
+  uris = ['gs://datalake-project-bkt-22082026/landing/retailer-db/orders/*.json']
 );
 
 CREATE EXTERNAL TABLE IF NOT EXISTS `project-bd10f83d-812d-48fb-93c.bronze_dataset_maya.customers`
@@ -19,7 +19,7 @@ CREATE EXTERNAL TABLE IF NOT EXISTS `project-bd10f83d-812d-48fb-93c.bronze_datas
 )
 OPTIONS (
     format = 'JSON',
-    uris = ['gs://retailer-datalake-project-27032025/landing/retailer-db/customers/*.json']
+    uris = ['gs://datalake-project-bkt-22082026/landing/retailer-db/customers/*.json']
 );
 
 CREATE EXTERNAL TABLE IF NOT EXISTS `project-bd10f83d-812d-48fb-93c.bronze_dataset_maya.products`
@@ -32,7 +32,7 @@ CREATE EXTERNAL TABLE IF NOT EXISTS `project-bd10f83d-812d-48fb-93c.bronze_datas
 )
 OPTIONS (
     format = 'JSON',
-    uris = ['gs://retailer-datalake-project-27032025/landing/retailer-db/products/*.json']
+    uris = ['gs://datalake-project-bkt-22082026/landing/retailer-db/products/*.json']
 );
 
 CREATE EXTERNAL TABLE IF NOT EXISTS `project-bd10f83d-812d-48fb-93c.bronze_dataset_maya.categories`
@@ -43,7 +43,7 @@ CREATE EXTERNAL TABLE IF NOT EXISTS `project-bd10f83d-812d-48fb-93c.bronze_datas
 )
 OPTIONS (
     format = 'JSON',
-    uris = ['gs://retailer-datalake-project-27032025/landing/retailer-db/categories/*.json']
+    uris = ['gs://datalake-project-bkt-22082026/landing/retailer-db/categories/*.json']
 );
 
 CREATE EXTERNAL TABLE IF NOT EXISTS `project-bd10f83d-812d-48fb-93c.bronze_dataset_maya.order_items`
@@ -57,7 +57,7 @@ CREATE EXTERNAL TABLE IF NOT EXISTS `project-bd10f83d-812d-48fb-93c.bronze_datas
 )
 OPTIONS (
     format = 'JSON',
-    uris = ['gs://retailer-datalake-project-27032025/landing/retailer-db/order_items/*.json']
+    uris = ['gs://datalake-project-bkt-22082026/landing/retailer-db/order_items/*.json']
 );
 -------------------------------------------------------------------------------------------------------------
 -- Suppliers Table
@@ -74,7 +74,7 @@ CREATE EXTERNAL TABLE IF NOT EXISTS `project-bd10f83d-812d-48fb-93c.bronze_datas
 )
 OPTIONS (
   format = 'JSON',
-  uris = ['gs://retailer-datalake-project-27032025/landing/supplier-db/suppliers/*.json']
+  uris = ['gs://datalake-project-bkt-22082026/landing/supplier-db/suppliers/*.json']
 );
 
 -- Product Suppliers Table (Mapping suppliers to products)
@@ -86,7 +86,7 @@ CREATE EXTERNAL TABLE IF NOT EXISTS `project-bd10f83d-812d-48fb-93c.bronze_datas
 )
 OPTIONS (
   format = 'JSON',
-  uris = ['gs://retailer-datalake-project-27032025/landing/supplier-db/product_suppliers/*.json']
+  uris = ['gs://datalake-project-bkt-22082026/landing/supplier-db/product_suppliers/*.json']
 );
 
 -------------------------------------------------------------------------------------------------------------
