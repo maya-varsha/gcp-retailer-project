@@ -1,5 +1,6 @@
 --1️. Sales Summary (sales_summary)
-CREATE TABLE IF NOT EXISTS `avd-databricks-demo.gold_dataset.sales_summary`
+CREATE TABLE IF NOT EXISTS `project-bd10f83d-812d-48fb-93c
+.gold_dataset_maya.sales_summary`
 AS
 SELECT 
     o.order_date,
@@ -10,17 +11,17 @@ SELECT
     SUM(oi.quantity) AS total_units_sold,
     SUM(oi.price * oi.quantity) AS total_sales,
     COUNT(DISTINCT o.customer_id) AS unique_customers
-FROM `avd-databricks-demo.silver_dataset.orders` o
-JOIN `avd-databricks-demo.silver_dataset.order_items` oi ON o.order_id = oi.order_id
-JOIN `avd-databricks-demo.silver_dataset.products` p ON oi.product_id = p.product_id
-JOIN `avd-databricks-demo.silver_dataset.categories` c ON p.category_id = c.category_id
+FROM `project-bd10f83d-812d-48fb-93c.silver_dataset_maya.orders` o
+JOIN `project-bd10f83d-812d-48fb-93c.silver_dataset_maya.order_items` oi ON o.order_id = oi.order_id
+JOIN `project-bd10f83d-812d-48fb-93c.silver_dataset_maya.products` p ON oi.product_id = p.product_id
+JOIN `project-bd10f83d-812d-48fb-93c.silver_dataset_maya.categories` c ON p.category_id = c.category_id
 WHERE o.is_active = TRUE
 GROUP BY 1, 2, 3, 4, 5;
 
 -----------------------------------------------------------------------------------------------------------
 -- 2. Customer Engagement Metrics (customer_engagement)
 
-CREATE TABLE IF NOT EXISTS `avd-databricks-demo.gold_dataset.customer_engagement`
+CREATE TABLE IF NOT EXISTS `project-bd10f83d-812d-48fb-93c.gold_dataset_maya.customer_engagement`
 AS
 SELECT 
     c.customer_id,
@@ -30,16 +31,16 @@ SELECT
     MAX(o.order_date) AS last_order_date,
     DATE_DIFF(CURRENT_DATE(), DATE(TIMESTAMP_MILLIS(CAST(o.order_date AS INT64))), DAY) AS days_since_last_order,
     AVG(oi.price * oi.quantity) AS avg_order_value
-FROM `avd-databricks-demo.silver_dataset.customers` c
-LEFT JOIN `avd-databricks-demo.silver_dataset.orders` o ON c.customer_id = o.customer_id
-LEFT JOIN `avd-databricks-demo.silver_dataset.order_items` oi ON o.order_id = oi.order_id
+FROM `project-bd10f83d-812d-48fb-93c.silver_dataset_maya.customers` c
+LEFT JOIN `project-bd10f83d-812d-48fb-93c.silver_dataset_maya.orders` o ON c.customer_id = o.customer_id
+LEFT JOIN `project-bd10f83d-812d-48fb-93c.silver_dataset_maya.order_items` oi ON o.order_id = oi.order_id
 WHERE c.is_active = TRUE
 GROUP BY 1, 2, 6;
 
 -----------------------------------------------------------------------------------------------------------
 --3. Product Performance (product_performance)
 
-CREATE TABLE IF NOT EXISTS `avd-databricks-demo.gold_dataset.product_performance`
+CREATE TABLE IF NOT EXISTS `project-bd10f83d-812d-48fb-93c.gold_dataset_maya.product_performance`
 AS
 SELECT 
     p.product_id,
@@ -52,18 +53,18 @@ SELECT
     SUM(oi.price * oi.quantity) AS total_revenue,
     AVG(cr.rating) AS avg_rating,
     COUNT(cr.review_text) AS total_reviews
-FROM `avd-databricks-demo.silver_dataset.products` p
-LEFT JOIN `avd-databricks-demo.silver_dataset.categories` c ON p.category_id = c.category_id
-LEFT JOIN `avd-databricks-demo.silver_dataset.product_suppliers` ps ON p.product_id = ps.product_id
-LEFT JOIN `avd-databricks-demo.silver_dataset.suppliers` s ON ps.supplier_id = s.supplier_id
-LEFT JOIN `avd-databricks-demo.silver_dataset.order_items` oi ON p.product_id = oi.product_id
-LEFT JOIN `avd-databricks-demo.silver_dataset.customer_reviews` cr ON p.product_id = cr.product_id
+FROM `project-bd10f83d-812d-48fb-93c.silver_dataset_maya.products` p
+LEFT JOIN `project-bd10f83d-812d-48fb-93c.silver_dataset_maya.categories` c ON p.category_id = c.category_id
+LEFT JOIN `project-bd10f83d-812d-48fb-93c.silver_dataset_maya.product_suppliers` ps ON p.product_id = ps.product_id
+LEFT JOIN `project-bd10f83d-812d-48fb-93c.silver_dataset_maya.suppliers` s ON ps.supplier_id = s.supplier_id
+LEFT JOIN `project-bd10f83d-812d-48fb-93c.silver_dataset_maya.order_items` oi ON p.product_id = oi.product_id
+LEFT JOIN `project-bd10f83d-812d-48fb-93c.silver_dataset_maya.customer_reviews` cr ON p.product_id = cr.product_id
 WHERE p.is_quarantined = FALSE
 GROUP BY 1, 2, 3, 4, 5, 6;
 
 -----------------------------------------------------------------------------------------------------------
 --4. Supplier Performance (supplier_analysis)
-CREATE TABLE IF NOT EXISTS `avd-databricks-demo.gold_dataset.supplier_analysis`
+CREATE TABLE IF NOT EXISTS `project-bd10f83d-812d-48fb-93c.gold_dataset_maya.supplier_analysis`
 AS
 SELECT 
     s.supplier_id,
@@ -71,15 +72,15 @@ SELECT
     COUNT(DISTINCT ps.product_id) AS total_products_supplied,
     SUM(oi.quantity) AS total_units_sold,
     SUM(oi.price * oi.quantity) AS total_revenue
-FROM `avd-databricks-demo.silver_dataset.suppliers` s
-LEFT JOIN `avd-databricks-demo.silver_dataset.product_suppliers` ps ON s.supplier_id = ps.supplier_id
-LEFT JOIN `avd-databricks-demo.silver_dataset.order_items` oi ON ps.product_id = oi.product_id
+FROM `project-bd10f83d-812d-48fb-93c.silver_dataset_maya.suppliers` s
+LEFT JOIN `project-bd10f83d-812d-48fb-93c.silver_dataset_maya.product_suppliers` ps ON s.supplier_id = ps.supplier_id
+LEFT JOIN `project-bd10f83d-812d-48fb-93c.silver_dataset_maya.order_items` oi ON ps.product_id = oi.product_id
 WHERE s.is_quarantined = FALSE
 GROUP BY 1, 2;
 
 -----------------------------------------------------------------------------------------------------------
 --5. Customer Reviews Summary (customer_reviews_summary)
-CREATE TABLE IF NOT EXISTS `avd-databricks-demo.gold_dataset.customer_reviews_summary`
+CREATE TABLE IF NOT EXISTS `project-bd10f83d-812d-48fb-93c.gold_dataset_maya.customer_reviews_summary`
 AS
 SELECT 
     p.product_id,
@@ -88,8 +89,8 @@ SELECT
     COUNT(cr.review_text) AS total_reviews,
     COUNT(CASE WHEN cr.rating >= 4 THEN 1 END) AS positive_reviews,
     COUNT(CASE WHEN cr.rating < 3 THEN 1 END) AS negative_reviews
-FROM `avd-databricks-demo.silver_dataset.products` p
-LEFT JOIN `avd-databricks-demo.silver_dataset.customer_reviews` cr ON p.product_id = cr.product_id
+FROM `project-bd10f83d-812d-48fb-93c.silver_dataset_maya.products` p
+LEFT JOIN `project-bd10f83d-812d-48fb-93c.silver_dataset_maya.customer_reviews` cr ON p.product_id = cr.product_id
 WHERE p.is_quarantined = FALSE
 GROUP BY 1, 2;
 
