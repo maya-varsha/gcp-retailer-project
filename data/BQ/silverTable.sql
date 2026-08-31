@@ -168,15 +168,10 @@ WHEN MATCHED AND
     #compare old name vs new name
     target.customer_id IS DISTINCT FROM source.customer_id
 
-    -- Convert Silver STRING to TIMESTAMP before comparison
-    OR SAFE_CAST(target.order_date AS TIMESTAMP)
-       IS DISTINCT FROM source.order_date
-
+    #Bronze order_date and updated_at are both STRING; compare directly.
+    OR target.order_date IS DISTINCT FROM source.order_date
     OR target.total_amount IS DISTINCT FROM source.total_amount
-
-    -- Convert Silver STRING to TIMESTAMP before comparison
-    OR SAFE_CAST(target.updated_at AS TIMESTAMP)
-       IS DISTINCT FROM source.updated_at
+    OR target.updated_at IS DISTINCT FROM source.updated_at
 )
 
 THEN UPDATE SET
@@ -287,8 +282,7 @@ WHEN MATCHED AND
     OR target.product_id IS DISTINCT FROM source.product_id
     OR target.quantity IS DISTINCT FROM source.quantity
     OR target.price IS DISTINCT FROM source.price
-    OR SAFE_CAST(target.updated_at AS TIMESTAMP)
-       IS DISTINCT FROM source.updated_at
+    OR target.updated_at IS DISTINCT FROM source.updated_at
 )
 
 THEN UPDATE SET
