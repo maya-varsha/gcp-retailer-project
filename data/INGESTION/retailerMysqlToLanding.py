@@ -150,18 +150,19 @@ def extract_and_save_to_landing(table, load_type, watermark_col):
                 .load())
         log_event("SUCCESS", f"✅ Successfully extracted data from {table}", table=table)
         
-        # Convert Spark DataFrame to JSON
-        pandas_df = df.toPandas()
-        json_data = pandas_df.to_json(orient="records", lines=True)
-        
-        # Generate File Path in GCS
+        # Write JSON directly from Spark (distributed), avoiding a driver-side toPandas() collect
         today = datetime.datetime.today().strftime('%d%m%Y')
         JSON_FILE_PATH = f"landing/retailer-db/{table}/{table}_{today}.json"
-        
-        # Upload JSON to GCS
+        TEMP_DIR_PATH = f"landing/retailer-db/{table}/_tmp_{table}_{today}"
+
+        df.coalesce(1).write.mode("overwrite").json(f"gs://{GCS_BUCKET}/{TEMP_DIR_PATH}")
+
         bucket = storage_client.bucket(GCS_BUCKET)
-        blob = bucket.blob(JSON_FILE_PATH)
-        blob.upload_from_string(json_data, content_type="application/json")
+        temp_blobs = list(bucket.list_blobs(prefix=f"{TEMP_DIR_PATH}/"))
+        part_file = next(b for b in temp_blobs if b.name.endswith(".json"))
+        bucket.copy_blob(part_file, bucket, JSON_FILE_PATH)
+        for b in temp_blobs:
+            b.delete()
 
         log_event("SUCCESS", f"✅ JSON file successfully written to gs://{GCS_BUCKET}/{JSON_FILE_PATH}", table=table)
         
