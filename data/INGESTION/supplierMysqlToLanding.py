@@ -138,11 +138,11 @@ def extract_and_save_to_landing(table, load_type, watermark_col):
                 f"(SELECT * FROM {table} WHERE {watermark_col} > '{last_watermark}') AS t"
         
         # Read Data from MySQL
+        jdbc_url = f"jdbc:mysql://{MYSQL_CONFIG['host']}:{MYSQL_CONFIG['port']}/{MYSQL_CONFIG['database']}"
+
         df = (spark.read
                 .format("jdbc")
-                .option("host", MYSQL_CONFIG["host"])
-                .option("port", MYSQL_CONFIG["port"])
-                .option("database", MYSQL_CONFIG["database"])
+                .option("url", jdbc_url)
                 .option("user", MYSQL_CONFIG["user"])
                 .option("password", MYSQL_CONFIG["password"])
                 .option("driver", MYSQL_CONFIG["driver"])
