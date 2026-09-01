@@ -96,12 +96,12 @@ with DAG(
         project_id=PROJECT_ID
     )
 
-    #stop_cluster = DataprocStopClusterOperator(
-        #task_id="stop_cluster",
-        #project_id=PROJECT_ID,
-        #region=REGION,
-        #cluster_name=CLUSTER_NAME,
-    #)
+    stop_cluster = DataprocStopClusterOperator(
+        task_id="stop_cluster",
+        project_id=PROJECT_ID,
+        region=REGION,
+        cluster_name=CLUSTER_NAME,
+    )
 
 # define the task dependencies
-start_cluster >> pyspark_task_1 >> pyspark_task_2 >> pyspark_task_3 
+start_cluster >> pyspark_task_1 >> pyspark_task_2 >> pyspark_task_3 >> stop_cluster
