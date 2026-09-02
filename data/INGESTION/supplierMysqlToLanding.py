@@ -21,7 +21,7 @@ BQ_TEMP_PATH = f"{GCS_BUCKET}/temp/"
 
 # MySQL Configuration
 MYSQL_CONFIG = {
-    "host": "34.66.130.142",
+    "host": "136.116.237.43",
         "port": 3306,
         "database": "retailerDB",
         "user": "myuser",
