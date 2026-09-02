@@ -25,7 +25,7 @@ MYSQL_CONFIG = {
         "port": 3306,
         "database": "retailerDB",
         "user": "myuser",
-        "password": "Jdsports@123",
+        "password": "Jdsports@1234",
         "connection_timeout": 30,
         "driver": "com.mysql.cj.jdbc.Driver"
 }
