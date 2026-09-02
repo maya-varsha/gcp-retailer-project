@@ -1,197 +1,1149 @@
-from google.cloud import storage, bigquery
-import pandas as pd
-from pyspark.sql import SparkSession
-import datetime
+import csv
+import io
 import json
+import os
+import tempfile
+import datetime
+import decimal
 
-# Initialize Spark Session
-spark = SparkSession.builder.appName("supplierMySQLToLanding").getOrCreate()
+import mysql.connector
 
-# Google Cloud Storage (GCS) Configuration variables
+from google.cloud import storage
+from google.cloud import bigquery
+
+
+# ============================================================
+# CONFIGURATION
+# ============================================================
+
 GCS_BUCKET = "datalake-project-bkt-22082026"
-LANDING_PATH = f"gs://{GCS_BUCKET}/landing/supplier-db/"
-ARCHIVE_PATH = f"gs://{GCS_BUCKET}/landing/supplier-db/archive/"
-CONFIG_FILE_PATH = f"gs://{GCS_BUCKET}/configs/supplier_config.csv"
 
-# BigQuery Configuration
+CONFIG_FILE = "configs/supplier_config.csv"
+
+LANDING_PREFIX = "landing/supplier-db"
+ARCHIVE_PREFIX = "landing/supplier-db/archive"
+LOG_PREFIX = "temp/pipeline_logs"
+
 BQ_PROJECT = "project-bd10f83d-812d-48fb-93c"
-BQ_AUDIT_TABLE = f"{BQ_PROJECT}.temp_dataset.audit_log"
-BQ_LOG_TABLE = f"{BQ_PROJECT}.temp_dataset.pipeline_logs"
-BQ_TEMP_PATH = f"{GCS_BUCKET}/temp/"  
 
-# MySQL Configuration
+BQ_DATASET = "temp_dataset_maya"
+
+BQ_AUDIT_TABLE = (
+    f"{BQ_PROJECT}.{BQ_DATASET}.audit_log"
+)
+
+BQ_LOG_TABLE = (
+    f"{BQ_PROJECT}.{BQ_DATASET}.pipeline_logs"
+)
+
+
+# ============================================================
+# CLOUD SQL MYSQL CONFIGURATION
+# ============================================================
+
 MYSQL_CONFIG = {
-    "host": "136.116.237.43",
-        "port": 3306,
-        "database": "retailerDB",
-        "user": "myuser",
-        "password": "Jdsports@1234",
-        "connection_timeout": 30,
-        "driver": "com.mysql.cj.jdbc.Driver"
+    "host": "136.64.101.59",
+    "port": 3306,
+    "database": "supplierDB",
+    "user": "myuser",
+    "password": "Jdsports@1234",
+    "connection_timeout": 30
 }
 
-# Initialize GCS & BigQuery Clients
-storage_client = storage.Client()
-bq_client = bigquery.Client()
 
-# Logging Mechanism
-log_entries = []  # Stores logs before writing to GCS
-##---------------------------------------------------------------------------------------------------##
+# ============================================================
+# EXTRACTION SETTINGS
+# ============================================================
+
+FETCH_SIZE = 5000
+
+
+# ============================================================
+# GOOGLE CLOUD CLIENTS
+# ============================================================
+
+storage_client = storage.Client(
+    project=BQ_PROJECT
+)
+
+bq_client = bigquery.Client(
+    project=BQ_PROJECT
+)
+
+
+# ============================================================
+# LOGGING
+# ============================================================
+
+log_entries = []
+
+
 def log_event(event_type, message, table=None):
-    """Log an event and store it in the log list"""
-    log_entry = {
-        "timestamp": datetime.datetime.now().isoformat(),
+
+    timestamp = (
+        datetime.datetime.utcnow()
+        .strftime("%Y-%m-%d %H:%M:%S")
+    )
+
+    entry = {
+        "timestamp": timestamp,
         "event_type": event_type,
         "message": message,
         "table": table
     }
-    log_entries.append(log_entry)
-    print(f"[{log_entry['timestamp']}] {event_type} - {message}")  # Print for visibility
-##---------------------------------------------------------------------------------------------------##
-def save_logs_to_gcs():
-    """Save logs to a JSON file and upload to GCS"""
-    log_filename = f"pipeline_log_{datetime.datetime.now().strftime('%Y%m%d%H%M%S')}.json"
-    log_filepath = f"temp/pipeline_logs/{log_filename}"  
-    
-    json_data = json.dumps(log_entries, indent=4)
 
-    # Get GCS bucket
-    bucket = storage_client.bucket(GCS_BUCKET)
-    blob = bucket.blob(log_filepath)
-    
-    # Upload JSON data as a file
-    blob.upload_from_string(json_data, content_type="application/json")
+    log_entries.append(entry)
 
-    print(f"✅ Logs successfully saved to GCS at gs://{GCS_BUCKET}/{log_filepath}")
-    
-def save_logs_to_bigquery():
-    """Save logs to BigQuery"""
-    if log_entries:
-        log_df = spark.createDataFrame(log_entries)
-        log_df.write.format("bigquery") \
-            .option("table", BQ_LOG_TABLE) \
-            .option("temporaryGcsBucket", BQ_TEMP_PATH) \
-            .mode("append") \
-            .save()
-        print("✅ Logs stored in BigQuery for future analysis")
+    print(
+        f"[{timestamp}] "
+        f"{event_type} - "
+        f"{message}"
+    )
 
 
-##---------------------------------------------------------------------------------------------------##
-# Function to Read Config File from GCS
+# ============================================================
+# UNIVERSAL JSON CONVERTER
+# ============================================================
+
+def make_json_safe(value):
+
+    if value is None:
+        return None
+
+    # --------------------------------------------------------
+    # DECIMAL
+    # --------------------------------------------------------
+
+    if isinstance(value, decimal.Decimal):
+
+        # Convert Decimal to float
+        return float(value)
+
+    # --------------------------------------------------------
+    # DATETIME
+    # --------------------------------------------------------
+
+    if isinstance(value, datetime.datetime):
+
+        return value.isoformat(
+            sep=" "
+        )
+
+    # --------------------------------------------------------
+    # DATE
+    # --------------------------------------------------------
+
+    if isinstance(value, datetime.date):
+
+        return value.isoformat()
+
+    # --------------------------------------------------------
+    # TIME
+    # --------------------------------------------------------
+
+    if isinstance(value, datetime.time):
+
+        return value.isoformat()
+
+    # --------------------------------------------------------
+    # BYTES
+    # --------------------------------------------------------
+
+    if isinstance(value, bytes):
+
+        try:
+
+            return value.decode(
+                "utf-8"
+            )
+
+        except Exception:
+
+            return value.hex()
+
+    # --------------------------------------------------------
+    # EVERYTHING ELSE
+    # --------------------------------------------------------
+
+    return value
+
+
+# ============================================================
+# READ CONFIG FILE FROM GCS
+# ============================================================
+
 def read_config_file():
-    df = spark.read.csv(CONFIG_FILE_PATH, header=True)
-    log_event("INFO", "✅ Successfully read the config file")
-    return df
-##---------------------------------------------------------------------------------------------------##
-# Function to Move Existing Files to Archive
-def move_existing_files_to_archive(table):
-    blobs = list(storage_client.bucket(GCS_BUCKET).list_blobs(prefix=f"landing/supplier-db/{table}/"))
-    existing_files = [blob.name for blob in blobs if blob.name.endswith(".json")]
-    
-    if not existing_files:
-        log_event("INFO", f"No existing files for table {table}")
-        return
-    
-    for file in existing_files:
-        source_blob = storage_client.bucket(GCS_BUCKET).blob(file)
-        
-        # Extract Date from File Name (products_27032025.json)
-        date_part = file.split("_")[-1].split(".")[0]
-        year, month, day = date_part[-4:], date_part[2:4], date_part[:2]
-        
-        # Move to Archive
-        archive_path = f"landing/supplier-db/archive/{table}/{year}/{month}/{day}/{file.split('/')[-1]}"
-        destination_blob = storage_client.bucket(GCS_BUCKET).blob(archive_path)
-        
-        # Copy file to archive and delete original
-        storage_client.bucket(GCS_BUCKET).copy_blob(source_blob, storage_client.bucket(GCS_BUCKET), destination_blob.name)
-        source_blob.delete()
-        
-        log_event("INFO", f"✅ Moved {file} to {archive_path}", table=table)    
-        
-##---------------------------------------------------------------------------------------------------##
 
-# Function to Get Latest Watermark from BigQuery Audit Table
-def get_latest_watermark(table_name):
+    bucket = storage_client.bucket(
+        GCS_BUCKET
+    )
+
+    blob = bucket.blob(
+        CONFIG_FILE
+    )
+
+    content = blob.download_as_text(
+        encoding="utf-8"
+    )
+
+    reader = csv.DictReader(
+        io.StringIO(content)
+    )
+
+    rows = list(reader)
+
+    if not reader.fieldnames:
+
+        raise RuntimeError(
+            "Config file has no header."
+        )
+
+    columns = [
+        column.strip()
+        for column in reader.fieldnames
+    ]
+
+    required_columns = [
+        "database",
+        "datasource",
+        "tablename",
+        "loadtype",
+        "watermark",
+        "is_active",
+        "targetpath"
+    ]
+
+    missing = [
+        column
+        for column in required_columns
+        if column not in columns
+    ]
+
+    if missing:
+
+        raise RuntimeError(
+            "Missing config columns: "
+            + ", ".join(missing)
+        )
+
+    print()
+    print("==========================================")
+    print("CONFIGURATION FILE")
+    print("==========================================")
+
+    print("Columns found:")
+
+    for column in columns:
+
+        print(
+            f"  {column}"
+        )
+
+    print("==========================================")
+    print()
+
+    log_event(
+        "SUCCESS",
+        (
+            f"Successfully read config file. "
+            f"Found {len(rows)} rows."
+        )
+    )
+
+    return rows
+
+
+# ============================================================
+# CREATE MYSQL CONNECTION
+# ============================================================
+
+def create_mysql_connection():
+
+    try:
+
+        log_event(
+            "INFO",
+            "Connecting to Cloud SQL MySQL..."
+        )
+
+        connection = mysql.connector.connect(
+
+            host=MYSQL_CONFIG["host"],
+
+            port=MYSQL_CONFIG["port"],
+
+            database=MYSQL_CONFIG["database"],
+
+            user=MYSQL_CONFIG["user"],
+
+            password=MYSQL_CONFIG["password"],
+
+            connection_timeout=30,
+
+            ssl_disabled=False,
+
+            use_pure=True
+        )
+
+        if connection.is_connected():
+
+            log_event(
+                "SUCCESS",
+                "Cloud SQL MySQL connection successful."
+            )
+
+            return connection
+
+        return None
+
+    except mysql.connector.Error as e:
+
+        log_event(
+            "ERROR",
+            f"MySQL connection failed: {str(e)}"
+        )
+
+        return None
+
+
+# ============================================================
+# GET LATEST WATERMARK
+# ============================================================
+
+def get_latest_watermark(table):
+
     query = f"""
         SELECT MAX(load_timestamp) AS latest_timestamp
         FROM `{BQ_AUDIT_TABLE}`
-        WHERE tablename = '{table_name}'
+        WHERE tablename = @table
+        AND status = 'SUCCESS'
     """
-    query_job = bq_client.query(query)
-    result = query_job.result()
-    for row in result:
-        return row.latest_timestamp if row.latest_timestamp else "1900-01-01 00:00:00"
-    return "1900-01-01 00:00:00"
-        
-##---------------------------------------------------------------------------------------------------##
 
-# Function to Extract Data from MySQL and Save to GCS
-def extract_and_save_to_landing(table, load_type, watermark_col):
     try:
-        # Get Latest Watermark
-        last_watermark = get_latest_watermark(table) if load_type.lower() == "incremental" else None
-        log_event("INFO", f"Latest watermark for {table}: {last_watermark}", table=table)
-        
-        # Generate SQL Query
-        query = f"(SELECT * FROM {table}) AS t" if load_type.lower() == "full load" else \
-                f"(SELECT * FROM {table} WHERE {watermark_col} > '{last_watermark}') AS t"
-        
-        # Read Data from MySQL
-        jdbc_url = f"jdbc:mysql://{MYSQL_CONFIG['host']}:{MYSQL_CONFIG['port']}/{MYSQL_CONFIG['database']}"
 
-        df = (spark.read
-                .format("jdbc")
-                .option("url", jdbc_url)
-                .option("user", MYSQL_CONFIG["user"])
-                .option("password", MYSQL_CONFIG["password"])
-                .option("driver", MYSQL_CONFIG["driver"])
-                .option("dbtable", query)
-                .load())
-        log_event("SUCCESS", f"✅ Successfully extracted data from {table}", table=table)
-        
-        # Write JSON directly from Spark (distributed), avoiding a driver-side toPandas() collect
-        today = datetime.datetime.today().strftime('%d%m%Y')
-        JSON_FILE_PATH = f"landing/supplier-db/{table}/{table}_{today}.json"
-        TEMP_DIR_PATH = f"landing/supplier-db/{table}/_tmp_{table}_{today}"
+        job_config = (
+            bigquery.QueryJobConfig(
+                query_parameters=[
+                    bigquery.ScalarQueryParameter(
+                        "table",
+                        "STRING",
+                        table
+                    )
+                ]
+            )
+        )
 
-        df.coalesce(1).write.mode("overwrite").json(f"gs://{GCS_BUCKET}/{TEMP_DIR_PATH}")
+        result = bq_client.query(
+            query,
+            job_config=job_config
+        ).result()
 
-        bucket = storage_client.bucket(GCS_BUCKET)
-        temp_blobs = list(bucket.list_blobs(prefix=f"{TEMP_DIR_PATH}/"))
-        part_file = next(b for b in temp_blobs if b.name.endswith(".json"))
-        bucket.copy_blob(part_file, bucket, JSON_FILE_PATH)
-        for b in temp_blobs:
-            b.delete()
+        for row in result:
 
-        log_event("SUCCESS", f"✅ JSON file successfully written to gs://{GCS_BUCKET}/{JSON_FILE_PATH}", table=table)
-        # Insert Audit Entry
-        audit_df = spark.createDataFrame([
-            (table, load_type, df.count(), datetime.datetime.now(), "SUCCESS")], ["tablename", "load_type", "record_count", "load_timestamp", "status"])
+            if row.latest_timestamp:
 
-        (audit_df.write.format("bigquery")
-            .option("table", BQ_AUDIT_TABLE)
-            .option("temporaryGcsBucket", GCS_BUCKET)
-            .mode("append")
-            .save())
+                return row.latest_timestamp
 
-        log_event("SUCCESS", f"✅ Audit log updated for {table}", table=table)
-    
     except Exception as e:
-        log_event("ERROR", f"Error processing {table}: {str(e)}", table=table)
-        
-##---------------------------------------------------------------------------------------------------##
 
-# Main Execution
-config_df = read_config_file()
+        log_event(
+            "WARNING",
+            (
+                f"Could not read watermark for "
+                f"{table}: {str(e)}"
+            ),
+            table
+        )
 
-for row in config_df.collect():
-    if row["is_active"] == '1':
-        db, src, table, load_type, watermark, _, targetpath = row
-        move_existing_files_to_archive(table)
-        extract_and_save_to_landing(table, load_type, watermark)
+    return "2026-08-22 00:00:00"
 
-save_logs_to_gcs()
-save_logs_to_bigquery()       
-        
-print("✅ Pipeline completed successfully!")
+
+# ============================================================
+# BUILD SQL QUERY
+# ============================================================
+
+def build_query(
+    table,
+    load_type,
+    watermark_column
+):
+
+    load_type = (
+        str(load_type)
+        .strip()
+        .lower()
+    )
+
+    # --------------------------------------------------------
+    # FULL LOAD
+    # --------------------------------------------------------
+
+    if load_type == "full load":
+
+        return (
+            f"SELECT * FROM `{table}`",
+            None
+        )
+
+    # --------------------------------------------------------
+    # INCREMENTAL
+    # --------------------------------------------------------
+
+    if load_type == "incremental":
+
+        if not watermark_column:
+
+            raise ValueError(
+                f"Watermark column missing for {table}"
+            )
+
+        last_watermark = (
+            get_latest_watermark(table)
+        )
+
+        if hasattr(
+            last_watermark,
+            "strftime"
+        ):
+
+            last_watermark = (
+                last_watermark.strftime(
+                    "%Y-%m-%d %H:%M:%S"
+                )
+            )
+
+        log_event(
+            "INFO",
+            (
+                f"Latest watermark for "
+                f"{table}: {last_watermark}"
+            ),
+            table
+        )
+
+        return (
+            f"SELECT * "
+            f"FROM `{table}` "
+            f"WHERE `{watermark_column}` > %s",
+            (
+                last_watermark,
+            )
+        )
+
+    raise ValueError(
+        f"Unsupported load type: {load_type}"
+    )
+
+
+# ============================================================
+# ARCHIVE EXISTING FILES
+# ============================================================
+
+def archive_existing_files(table):
+
+    bucket = storage_client.bucket(
+        GCS_BUCKET
+    )
+
+    prefix = (
+        f"{LANDING_PREFIX}/{table}/"
+    )
+
+    blobs = bucket.list_blobs(
+        prefix=prefix
+    )
+
+    existing_files = []
+
+    for blob in blobs:
+
+        if "/archive/" in blob.name:
+            continue
+
+        if blob.name.endswith(".json"):
+
+            existing_files.append(blob)
+
+    if not existing_files:
+
+        log_event(
+            "INFO",
+            "No existing files to archive.",
+            table
+        )
+
+        return
+
+    for blob in existing_files:
+
+        filename = (
+            blob.name.split("/")[-1]
+        )
+
+        name_without_extension = (
+            filename.rsplit(".", 1)[0]
+        )
+
+        parts = (
+            name_without_extension.split("_")
+        )
+
+        if len(parts) < 2:
+            continue
+
+        date_part = parts[-1]
+
+        if len(date_part) != 8:
+            continue
+
+        day = date_part[:2]
+        month = date_part[2:4]
+        year = date_part[4:]
+
+        archive_path = (
+            f"{ARCHIVE_PREFIX}/"
+            f"{table}/"
+            f"{year}/"
+            f"{month}/"
+            f"{day}/"
+            f"{filename}"
+        )
+
+        bucket.copy_blob(
+            blob,
+            bucket,
+            archive_path
+        )
+
+        blob.delete()
+
+        log_event(
+            "SUCCESS",
+            (
+                f"Archived {filename} to "
+                f"{archive_path}"
+            ),
+            table
+        )
+
+
+# ============================================================
+# MYSQL -> GCS
+# ============================================================
+
+def extract_mysql_to_gcs(
+    table,
+    load_type,
+    watermark_column,
+    target_path
+):
+
+    connection = None
+    cursor = None
+    temp_path = None
+
+    try:
+
+        # ----------------------------------------------------
+        # BUILD QUERY
+        # ----------------------------------------------------
+
+        query, parameters = build_query(
+            table,
+            load_type,
+            watermark_column
+        )
+
+        log_event(
+            "INFO",
+            f"SQL query prepared for {table}",
+            table
+        )
+
+        # ----------------------------------------------------
+        # CONNECT
+        # ----------------------------------------------------
+
+        connection = (
+            create_mysql_connection()
+        )
+
+        if connection is None:
+
+            log_event(
+                "ERROR",
+                (
+                    f"Skipping {table} because "
+                    "MySQL connection failed."
+                ),
+                table
+            )
+
+            return 0
+
+        # ----------------------------------------------------
+        # CURSOR
+        # ----------------------------------------------------
+
+        cursor = connection.cursor(
+            buffered=False
+        )
+
+        # ----------------------------------------------------
+        # EXECUTE
+        # ----------------------------------------------------
+
+        if parameters:
+
+            cursor.execute(
+                query,
+                parameters
+            )
+
+        else:
+
+            cursor.execute(
+                query
+            )
+
+        # ----------------------------------------------------
+        # COLUMN NAMES
+        # ----------------------------------------------------
+
+        columns = [
+            column[0]
+            for column in cursor.description
+        ]
+
+        # ----------------------------------------------------
+        # TEMP FILE
+        # ----------------------------------------------------
+
+        temporary_file = tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            suffix=".json",
+            delete=False
+        )
+
+        temp_path = (
+            temporary_file.name
+        )
+
+        record_count = 0
+
+        # ----------------------------------------------------
+        # STREAM DATA
+        # ----------------------------------------------------
+
+        while True:
+
+            rows = cursor.fetchmany(
+                FETCH_SIZE
+            )
+
+            if not rows:
+                break
+
+            for row in rows:
+
+                record = {}
+
+                for index, value in enumerate(row):
+
+                    record[
+                        columns[index]
+                    ] = make_json_safe(
+                        value
+                    )
+
+                # IMPORTANT:
+                # default=str guarantees that any
+                # unexpected MySQL type does not
+                # break the pipeline.
+
+                json_record = json.dumps(
+                    record,
+                    ensure_ascii=False,
+                    default=str
+                )
+
+                temporary_file.write(
+                    json_record
+                )
+
+                temporary_file.write("\n")
+
+                record_count += 1
+
+        temporary_file.close()
+
+        # ----------------------------------------------------
+        # NO DATA
+        # ----------------------------------------------------
+
+        if record_count == 0:
+
+            log_event(
+                "INFO",
+                (
+                    "No records found. "
+                    "No GCS file created."
+                ),
+                table
+            )
+
+            return 0
+
+        # ----------------------------------------------------
+        # GCS FILE PATH
+        # ----------------------------------------------------
+
+        today = (
+            datetime.datetime.utcnow()
+            .strftime("%d%m%Y")
+        )
+
+        target_path = (
+            str(target_path)
+            .strip()
+            .strip("/")
+        )
+
+        filename = (
+            f"{table}_{today}.json"
+        )
+
+        gcs_path = (
+            f"{target_path}/{filename}"
+        )
+
+        # ----------------------------------------------------
+        # UPLOAD
+        # ----------------------------------------------------
+
+        bucket = storage_client.bucket(
+            GCS_BUCKET
+        )
+
+        blob = bucket.blob(
+            gcs_path
+        )
+
+        blob.upload_from_filename(
+            temp_path,
+            content_type="application/json"
+        )
+
+        log_event(
+            "SUCCESS",
+            (
+                f"{record_count} records successfully "
+                f"written to "
+                f"gs://{GCS_BUCKET}/{gcs_path}"
+            ),
+            table
+        )
+
+        return record_count
+
+    except Exception as e:
+
+        log_event(
+            "ERROR",
+            (
+                f"Error processing {table}: "
+                f"{str(e)}"
+            ),
+            table
+        )
+
+        return 0
+
+    finally:
+
+        if cursor is not None:
+
+            try:
+                cursor.close()
+            except Exception:
+                pass
+
+        if connection is not None:
+
+            try:
+                connection.close()
+            except Exception:
+                pass
+
+        if temp_path:
+
+            try:
+
+                if os.path.exists(temp_path):
+
+                    os.remove(temp_path)
+
+            except Exception:
+                pass
+
+
+# ============================================================
+# WRITE AUDIT TO BIGQUERY
+# ============================================================
+
+def write_audit(
+    table,
+    load_type,
+    record_count
+):
+
+    # IMPORTANT:
+    # BigQuery insert_rows_json expects JSON-compatible
+    # values. Therefore datetime is converted to string.
+
+    timestamp = (
+        datetime.datetime.utcnow()
+        .isoformat()
+    )
+
+    row = {
+
+        "tablename": table,
+
+        "load_type": load_type,
+
+        "record_count": int(
+            record_count
+        ),
+
+        "load_timestamp": timestamp,
+
+        "status": "SUCCESS"
+    }
+
+    try:
+
+        errors = (
+            bq_client.insert_rows_json(
+                BQ_AUDIT_TABLE,
+                [row]
+            )
+        )
+
+        if errors:
+
+            log_event(
+                "WARNING",
+                (
+                    f"Audit insert failed: "
+                    f"{errors}"
+                ),
+                table
+            )
+
+        else:
+
+            log_event(
+                "SUCCESS",
+                "Audit log updated in BigQuery.",
+                table
+            )
+
+    except Exception as e:
+
+        log_event(
+            "WARNING",
+            (
+                f"Could not write audit record: "
+                f"{str(e)}"
+            ),
+            table
+        )
+
+
+# ============================================================
+# PROCESS TABLE
+# ============================================================
+
+def process_table(row):
+
+    table = str(
+        row.get(
+            "tablename",
+            ""
+        )
+    ).strip()
+
+    load_type = str(
+        row.get(
+            "loadtype",
+            ""
+        )
+    ).strip()
+
+    watermark = str(
+        row.get(
+            "watermark",
+            ""
+        )
+    ).strip()
+
+    target_path = str(
+        row.get(
+            "targetpath",
+            ""
+        )
+    ).strip()
+
+    if not table:
+
+        log_event(
+            "ERROR",
+            "tablename is missing in config."
+        )
+
+        return
+
+    log_event(
+        "INFO",
+        (
+            f"Configuration loaded: "
+            f"database={row.get('database')}, "
+            f"datasource={row.get('datasource')}, "
+            f"table={table}, "
+            f"loadtype={load_type}, "
+            f"watermark={watermark}, "
+            f"targetpath={target_path}"
+        ),
+        table
+    )
+
+    log_event(
+        "INFO",
+        (
+            f"Processing table '{table}' | "
+            f"Load type: {load_type}"
+        ),
+        table
+    )
+
+    try:
+
+        archive_existing_files(
+            table
+        )
+
+        record_count = (
+            extract_mysql_to_gcs(
+                table,
+                load_type,
+                watermark,
+                target_path
+            )
+        )
+
+        if record_count > 0:
+
+            write_audit(
+                table,
+                load_type,
+                record_count
+            )
+
+    except Exception as e:
+
+        log_event(
+            "ERROR",
+            (
+                f"Table '{table}' failed: "
+                f"{str(e)}"
+            ),
+            table
+        )
+
+
+# ============================================================
+# SAVE LOGS TO GCS
+# ============================================================
+
+def save_logs_to_gcs():
+
+    if not log_entries:
+        return
+
+    timestamp = (
+        datetime.datetime.utcnow()
+        .strftime("%Y%m%d%H%M%S")
+    )
+
+    filename = (
+        f"pipeline_log_{timestamp}.json"
+    )
+
+    path = (
+        f"{LOG_PREFIX}/{filename}"
+    )
+
+    json_data = json.dumps(
+        log_entries,
+        indent=4,
+        default=str
+    )
+
+    bucket = storage_client.bucket(
+        GCS_BUCKET
+    )
+
+    blob = bucket.blob(
+        path
+    )
+
+    blob.upload_from_string(
+        json_data,
+        content_type="application/json"
+    )
+
+    print()
+    print(
+        "Pipeline logs saved to:"
+    )
+
+    print(
+        f"gs://{GCS_BUCKET}/{path}"
+    )
+
+
+# ============================================================
+# SAVE LOGS TO BIGQUERY
+# ============================================================
+
+def save_logs_to_bigquery():
+
+    if not log_entries:
+        return
+
+    # Convert every value to JSON-safe values.
+    safe_logs = []
+
+    for entry in log_entries:
+
+        safe_entry = {
+            key: make_json_safe(value)
+            for key, value in entry.items()
+        }
+
+        safe_logs.append(
+            safe_entry
+        )
+
+    try:
+
+        errors = (
+            bq_client.insert_rows_json(
+                BQ_LOG_TABLE,
+                safe_logs
+            )
+        )
+
+        if errors:
+
+            print(
+                f"BigQuery logging warning: {errors}"
+            )
+
+        else:
+
+            print(
+                "Pipeline logs saved to BigQuery."
+            )
+
+    except Exception as e:
+
+        print(
+            f"BigQuery logging warning: {e}"
+        )
+
+
+# ============================================================
+# MAIN
+# ============================================================
+
+def main():
+
+    print()
+    print(
+        "=========================================="
+    )
+
+    print(
+        "supplier MySQL -> GCS pipeline started"
+    )
+
+    print(
+        "Spark is NOT used."
+    )
+
+    print(
+        "=========================================="
+    )
+
+    try:
+
+        config_rows = (
+            read_config_file()
+        )
+
+        active_tables = 0
+
+        for row in config_rows:
+
+            is_active = str(
+                row.get(
+                    "is_active",
+                    ""
+                )
+            ).strip().lower()
+
+            if is_active not in (
+                "1",
+                "true",
+                "yes"
+            ):
+
+                continue
+
+            active_tables += 1
+
+            process_table(
+                row
+            )
+
+        log_event(
+            "SUCCESS",
+            (
+                f"Pipeline completed. "
+                f"Active tables processed: "
+                f"{active_tables}"
+            )
+        )
+
+    except Exception as e:
+
+        log_event(
+            "ERROR",
+            f"Pipeline failed: {str(e)}"
+        )
+
+    finally:
+
+        save_logs_to_gcs()
+
+        save_logs_to_bigquery()
+
+
+# ============================================================
+# RUN
+# ============================================================
+
+main()
